@@ -1,0 +1,10 @@
+# vuln-app namespace
+#
+# In the vulnerable baseline the namespace carries NO Pod Security Standards
+# label (Vulnerability 3), so the API server accepts any pod spec, including
+# the privileged `pwned` pod. Hardening adds the `restricted` PSS label
+# (see hardening/HARDENING.md, Fix 3).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vuln-app
