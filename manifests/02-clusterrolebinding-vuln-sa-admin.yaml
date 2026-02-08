@@ -1,0 +1,26 @@
+# vuln-sa-admin ClusterRoleBinding  (Vulnerability 2: RBAC over-permission)
+#
+# This is the core misconfiguration. It grants the `vuln-sa` service account
+# the built-in `cluster-admin` role across the ENTIRE cluster, the highest
+# privilege level in Kubernetes. Once the token is stolen via LFI, the
+# attacker inherits god-mode over every namespace.
+#
+# In Kubernetes audit logs this binding is why the attacker's actions are
+# permitted:
+#   annotations.authorization.k8s.io/reason:
+#     RBAC: allowed by ClusterRoleBinding "vuln-sa-admin"
+#
+# Hardening deletes this binding (hardening/HARDENING.md, Fix 1) and replaces
+# it with a namespace-scoped Role + RoleBinding.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vuln-sa-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: vuln-sa
+    namespace: vuln-app
