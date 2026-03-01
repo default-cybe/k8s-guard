@@ -1,0 +1,28 @@
+# Filebeat config for VM1 (master): ships K8s audit logs
+#
+# Deployed on VM1 at /etc/filebeat/filebeat.yml
+#
+# Reads the k3s audit log and sends directly to Security Onion's Elasticsearch
+# (port 9200) into the k8s-audit-* index. Sends direct to Elasticsearch rather
+# than Logstash because Security Onion's Salt daemon kept overwriting the
+# Logstash beats-input pipeline config.
+#
+# NOTE: Elasticsearch password redacted. Set your own before deploying.
+filebeat.inputs:
+  - type: log
+    enabled: true
+    paths:
+      - /var/lib/rancher/k3s/server/audit/audit.log
+    json.keys_under_root: true
+    json.add_error_key: true
+    fields:
+      type: k8s-audit
+    fields_under_root: true
+output.elasticsearch:
+  hosts: ["https://192.168.50.30:9200"]
+  username: "so_elastic"
+  password: '<REDACTED-LAB-VALUE>'
+  ssl.verification_mode: none
+  index: "k8s-audit-%{+yyyy.MM.dd}"
+setup.ilm.enabled: false
+setup.template.enabled: false
