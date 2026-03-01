@@ -1,0 +1,17 @@
+# Kubernetes audit logging config
+#
+# Deployed on VM1 (master) at /etc/rancher/k3s/config.yaml
+#
+# Enables the built-in Kubernetes audit log that records every API request
+# (who did what, from where, to which resource, allowed or denied). This is
+# the primary forensic evidence shipped to Security Onion.
+#
+# The referenced audit policy lives at
+#   /var/lib/rancher/k3s/server/audit/policy.yaml
+# Note: `kind: Policy` requires a capital P.
+kube-apiserver-arg:
+  - "audit-policy-file=/var/lib/rancher/k3s/server/audit/policy.yaml"
+  - "audit-log-path=/var/lib/rancher/k3s/server/audit/audit.log"
+  - "audit-log-maxage=30"
+  - "audit-log-maxbackup=3"
+  - "audit-log-maxsize=100"
