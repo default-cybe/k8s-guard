@@ -1,0 +1,26 @@
+# Filebeat config for VM2 (worker): ships Falco alerts
+#
+# Deployed on VM2 at /etc/filebeat/filebeat.yml
+#
+# Reads Falco alerts from the systemd journal (falco-modern-bpf.service) and
+# sends directly to Security Onion's Elasticsearch (port 9200) into the
+# falco-alerts-* index.
+#
+# NOTE: Elasticsearch password redacted. Set your own before deploying.
+filebeat.inputs:
+  - type: journald
+    enabled: true
+    id: falco-journal
+    include_matches:
+      - _SYSTEMD_UNIT=falco-modern-bpf.service
+    fields:
+      type: falco-alert
+    fields_under_root: true
+output.elasticsearch:
+  hosts: ["https://192.168.50.30:9200"]
+  username: "so_elastic"
+  password: '<REDACTED-LAB-VALUE>'
+  ssl.verification_mode: none
+  index: "falco-alerts-%{+yyyy.MM.dd}"
+setup.ilm.enabled: false
+setup.template.enabled: false
