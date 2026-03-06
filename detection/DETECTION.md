@@ -53,3 +53,53 @@ fires the built-in rule **"Sensitive file opened for reading"** (severity
 3. Create `k8s-audit-*` data view with `@timestamp`.
 4. Create `falco-alerts-*` data view with `@timestamp`.
 
+> Data views are NOT pre-created. You create them during Phase 3.
+> Security Onion takes 10-20 minutes to fully start after boot.
+
+---
+
+## Investigating the Audit Logs
+Search for `vuln-sa` in the `k8s-audit-*` data view. Key fields / findings:
+
+| Field | Value | Meaning |
+|---|---|---|
+| `sourceIPs` | `192.168.50.20` | the attacker's IP |
+| `user.username` | `system:serviceaccount:vuln-app:vuln-sa` | the stolen identity |
+| `verb` | `create` | the attacker created a pod |
+| `objectRef.resource` | `pods` | a pod was the target |
+| `annotations.authorization.k8s.io/reason` | `RBAC: allowed by ClusterRoleBinding "vuln-sa-admin"` | why it was allowed |
+
+## Investigating the Falco Alerts
+Search for `shadow` in the `falco-alerts-*` data view. In the `message` field:
+
+| Field | Value |
+|---|---|
+| alert | `Warning Sensitive file opened for reading` |
+| `file` | `/etc/shadow` |
+| `process` | `cat` |
+| `command` | `cat /etc/shadow` |
+| `parent` | `containerd-shim` (confirms it's from a container) |
+| `host.name` | `worker` |
+| `container_id` | `787526146d38` |
+
+---
+
+## Detection Quiz (grading_script_2.sh, 10 questions)
+
+**Part A: Kubernetes Audit Logs**
+| # | Question | Answer |
+|---|---|---|
+| Q1 | Attacker's source IP | `192.168.50.20` |
+| Q2 | ClusterRoleBinding name | `vuln-sa-admin` |
+| Q3 | Service account (namespace:name) | `vuln-app:vuln-sa` |
+| Q4 | Resource type created | `pods` |
+| Q5 | API verb | `create` |
+
+**Part B: Falco Alerts**
+| # | Question | Answer |
+|---|---|---|
+| Q6 | Sensitive file read | `/etc/shadow` |
+| Q7 | Command that triggered alert | `cat /etc/shadow` |
+| Q8 | Parent process | `containerd-shim` |
+| Q9 | Host name | `worker` |
+| Q10 | Falco severity | `Warning` |
