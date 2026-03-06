@@ -1,0 +1,18 @@
+# Hardened vuln-app namespace with Pod Security Standards  (Hardening Fix 3)
+#
+# Declarative equivalent of:
+#   kubectl label namespace vuln-app \
+#     pod-security.kubernetes.io/enforce=restricted --overwrite
+#
+# The `restricted` Pod Security Standard blocks privileged containers, hostPath
+# mounts, running as root, and other dangerous capabilities. Even with
+# cluster-admin, the privileged `pwned` pod would be rejected at admission.
+#
+# Maps to NSA/CISA Kubernetes Hardening Guide v1.2, Section 4:
+# enforce Pod Security Standards.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: vuln-app
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
