@@ -1,0 +1,21 @@
+# Hardened RoleBinding  (Hardening Fix 2)
+#
+# This RoleBinding is namespace-scoped (replaces the cluster-wide
+# ClusterRoleBinding vuln-sa-admin that hardening Fix 1 deletes). The service
+# account can now only get/list pods in its own vuln-app namespace.
+#
+# Maps to NSA/CISA Kubernetes Hardening Guide v1.2, Section 5:
+# least-privilege RBAC.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vuln-sa-rolebinding
+  namespace: vuln-app
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vuln-sa-role
+subjects:
+  - kind: ServiceAccount
+    name: vuln-sa
+    namespace: vuln-app
