@@ -28,3 +28,32 @@ Hardened YAML in this folder:
 - [`hardened-role.yaml`](./hardened-role.yaml)
 - [`hardened-rolebinding.yaml`](./hardened-rolebinding.yaml)
 
+## Fix 3: Apply Pod Security Standards
+```bash
+sudo kubectl label namespace vuln-app pod-security.kubernetes.io/enforce=restricted --overwrite
+```
+The `restricted` PSS blocks privileged containers, hostPath mounts, running as
+root, and other dangerous capabilities. Even with cluster-admin, the privileged
+pod would be rejected. (Addresses Vulnerability 3. NSA/CISA Section 4.)
+
+Declarative equivalent: [`namespace-hardened.yaml`](./namespace-hardened.yaml)
+
+---
+
+## Why all three matter (defense in depth)
+- **RBAC fix alone:** Blocks this attacker, but if anyone else gets
+  cluster-admin, they can still create privileged pods.
+- **PSS alone:** Blocks privileged pods, but attacker still has cluster-admin
+  for other damage.
+- **Both together:** No permissions AND dangerous pod types blocked.
+
+## Why we don't fix the LFI
+The LFI is an application code bug, a developer's job, not a Kubernetes
+security fix. The point is: even with the app still vulnerable, proper K8s
+security controls limit the blast radius.
+
+---
+
+## Verification (from the lab's grading scripts)
+- `grading_script_3.sh` (VM1): checks the RBAC fix: binding deleted + role created.
+- `grading_script_4.sh` (VM1): checks PSS: label applied + privileged pod blocked.
