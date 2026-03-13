@@ -318,3 +318,163 @@ What makes this dangerous:
 kubectl ... apply -f ~/Desktop/pwned.yaml
 ```
 
+**Step 3:** Reads `/etc/shadow` inside the container (triggers Falco):
+```bash
+kubectl ... exec -it pwned -n vuln-app -- cat /etc/shadow
+```
+This is a natural attacker enumeration step, checking if you're root and what accounts exist. Falco catches this.
+
+**Step 4:** Captures the flag from the host filesystem:
+```bash
+kubectl ... exec -it pwned -n vuln-app -- cat /host/root/flag/proof.txt
+```
+Output: `FLAG{k8s_privilege_escalation_successful}`
+
+Complete takeover: from a web bug to full host access in a few commands.
+
+### Phase 3: Detection & Investigation (Security Onion)
+
+Students switch to the defender perspective on VM4.
+
+**Setting up Kibana:**
+1. Open `https://securityonion`, login with `student@aia.class` / `tartans@1`
+2. Navigate to Kibana > Stack Management > Data Views
+3. Create `k8s-audit-*` data view with `@timestamp`
+4. Create `falco-alerts-*` data view with `@timestamp`
+
+**Investigating Audit Logs:**
+Search for `vuln-sa` in the `k8s-audit-*` data view. Students find:
+- `sourceIPs: 192.168.50.20`: the attacker's IP
+- `user.username: system:serviceaccount:vuln-app:vuln-sa`: the stolen identity
+- `verb: create`: the attacker created a pod
+- `objectRef.resource: pods`: a pod was the target
+- `annotations.authorization.k8s.io/reason: RBAC: allowed by ClusterRoleBinding "vuln-sa-admin"`: why it was allowed
+
+**Investigating Falco Alerts:**
+Search for `shadow` in the `falco-alerts-*` data view. Students find in the `message` field:
+- `Warning Sensitive file opened for reading`
+- `file=/etc/shadow`
+- `process=cat`
+- `command=cat /etc/shadow`
+- `parent=containerd-shim` (confirms it's from a container)
+- `host.name=worker`
+- `container_id=787526146d38`
+
+**Why both are needed:**
+- Audit logs show WHO did WHAT at the API level (created a pod, exec'd into it)
+- Falco shows WHAT HAPPENED INSIDE the container (read /etc/shadow)
+- Without audit logs: You'd see Falco alerts but wouldn't know who deployed the pod
+- Without Falco: You'd see the pod was created but wouldn't know what commands ran inside
+
+### Phase 4: Hardening & Remediation (VM1)
+
+**Fix 1: Delete the overly permissive binding**
+```bash
+sudo kubectl delete clusterrolebinding vuln-sa-admin
+```
+Removes cluster-admin from vuln-sa. The stolen token now has zero permissions.
+
+**Fix 2: Apply least-privilege RBAC**
+```bash
+sudo kubectl apply -f ~/Desktop/hardened-role.yaml
+sudo kubectl apply -f ~/Desktop/hardened-rolebinding.yaml
+```
+Creates a namespace-scoped Role allowing only `get` and `list` on `pods` in `vuln-app`. The service account can now only view pods in its own namespace.
+
+**Fix 3: Apply Pod Security Standards**
+```bash
+sudo kubectl label namespace vuln-app pod-security.kubernetes.io/enforce=restricted --overwrite
+```
+The `restricted` PSS blocks privileged containers, hostPath mounts, running as root, and other dangerous capabilities. Even with cluster-admin, the privileged pod would be rejected.
+
+**Why all three matter:**
+- RBAC fix alone: Blocks this attacker, but if anyone else gets cluster-admin, they can still create privileged pods
+- PSS alone: Blocks privileged pods, but attacker still has cluster-admin for other damage
+- Both together: No permissions AND dangerous pod types blocked. Defense in depth.
+
+**Note:** We don't fix the LFI. That's an application code bug, a developer's job, not a Kubernetes security fix. The point is: even with the app still vulnerable, proper K8s security controls limit the blast radius.
+
+**NSA/CISA references:**
+- Section 4: Enforce Pod Security Standards
+- Section 5: Least-privilege RBAC, don't auto-mount tokens
+
+---
+
+## 8. Grading System
+
+### 5 Grading Scripts Using SHA256 Hashes
+
+| Script | VM | Phase | What It Checks |
+|---|---|---|---|
+| grading_script_0.sh | Kali | Phase 1 | LFI quiz: token path, binding name, port |
+| grading_script_1.sh | Kali | Phase 2 | Flag capture verification |
+| grading_script_2.sh | Security Onion | Phase 3 | 10 detection questions (5 audit + 5 Falco) |
+| grading_script_3.sh | VM1 | Phase 4 | RBAC fix: binding deleted + role created |
+| grading_script_4.sh | VM1 | Phase 4 | PSS: label applied + privileged pod blocked |
+
+### Grading Script 0 Answers
+- Q1: `/var/run/secrets/kubernetes.io/serviceaccount/token`
+- Q2: `vuln-sa-admin`
+- Q3: `30270`
+
+### Grading Script 1 Answer
+- Flag: `FLAG{k8s_privilege_escalation_successful}`
+
+### Grading Script 2 Answers
+
+**Part A: Kubernetes Audit Logs**
+| # | Question | Answer |
+|---|---|---|
+| Q1 | Attacker's source IP | `192.168.50.20` |
+| Q2 | ClusterRoleBinding name | `vuln-sa-admin` |
+| Q3 | Service account (namespace:name) | `vuln-app:vuln-sa` |
+| Q4 | Resource type created | `pods` |
+| Q5 | API verb | `create` |
+
+**Part B: Falco Alerts**
+| # | Question | Answer |
+|---|---|---|
+| Q6 | Sensitive file read | `/etc/shadow` |
+| Q7 | Command that triggered alert | `cat /etc/shadow` |
+| Q8 | Parent process | `containerd-shim` |
+| Q9 | Host name | `worker` |
+| Q10 | Falco severity | `Warning` |
+
+### Why SHA256
+Students can't reverse-engineer the answers from the script. SHA256 is a one-way hash: you can verify an answer matches but can't extract the answer from the hash.
+
+### Retry Logic
+Scripts 0 and 2 have retry logic: wrong answers prompt the student to try again instead of advancing. This addresses peer review feedback.
+
+---
+
+## 9. Infrastructure Build Details
+
+### k3s Cluster Setup
+**VM1 (Master):**
+```
+ExecStart=/usr/local/bin/k3s server --node-ip 192.168.50.10 --advertise-address 192.168.50.10 --tls-san 192.168.50.10 --flannel-iface=ens32
+```
+
+**VM2 (Worker):**
+```
+ExecStart=/usr/local/bin/k3s agent --node-ip 192.168.50.11 --flannel-iface=ens32
+```
+
+The `--flannel-iface=ens32` flag was added to fix flannel crashing when `bridge-net` (default route) was removed. Without it, flannel can't determine which interface to use and k3s crashes on startup.
+
+### Audit Logging Configuration
+`/etc/rancher/k3s/config.yaml` on VM1:
+```yaml
+kube-apiserver-arg:
+  - "audit-policy-file=/var/lib/rancher/k3s/server/audit/policy.yaml"
+  - "audit-log-path=/var/lib/rancher/k3s/server/audit/audit.log"
+  - "audit-log-maxage=30"
+  - "audit-log-maxbackup=3"
+  - "audit-log-maxsize=100"
+```
+
+### Filebeat Configurations
+
+**VM1** (`/etc/filebeat/filebeat.yml`):
+```yaml
