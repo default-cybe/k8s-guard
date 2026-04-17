@@ -478,3 +478,123 @@ kube-apiserver-arg:
 
 **VM1** (`/etc/filebeat/filebeat.yml`):
 ```yaml
+filebeat.inputs:
+  - type: log
+    enabled: true
+    paths:
+      - /var/lib/rancher/k3s/server/audit/audit.log
+    json.keys_under_root: true
+    json.add_error_key: true
+    fields:
+      type: k8s-audit
+    fields_under_root: true
+output.elasticsearch:
+  hosts: ["https://192.168.50.30:9200"]
+  username: "so_elastic"
+  password: '<REDACTED-LAB-VALUE>'
+  ssl.verification_mode: none
+  index: "k8s-audit-%{+yyyy.MM.dd}"
+setup.ilm.enabled: false
+setup.template.enabled: false
+```
+
+**VM2** (`/etc/filebeat/filebeat.yml`):
+```yaml
+filebeat.inputs:
+  - type: journald
+    enabled: true
+    id: falco-journal
+    include_matches:
+      - _SYSTEMD_UNIT=falco-modern-bpf.service
+    fields:
+      type: falco-alert
+    fields_under_root: true
+output.elasticsearch:
+  hosts: ["https://192.168.50.30:9200"]
+  username: "so_elastic"
+  password: '<REDACTED-LAB-VALUE>'
+  ssl.verification_mode: none
+  index: "falco-alerts-%{+yyyy.MM.dd}"
+setup.ilm.enabled: false
+setup.template.enabled: false
+```
+
+### Security Onion Configuration
+**IP change:** Original IP was `10.5.5.72`, changed to `192.168.50.30` in Salt pillar files:
+- `/opt/so/saltstack/local/pillar/minions/securityonion_standalone.sls`
+- `/opt/so/saltstack/local/pillar/global/soc_global.sls`
+- `/opt/so/saltstack/local/pillar/firewall/soc_firewall.sls`
+- `/opt/so/saltstack/local/pillar/kafka/nodes.sls`
+
+**Firewall:** VM1 and VM2 added to `searchnode` hostgroup via web UI to allow Filebeat access to Elasticsearch port 9200.
+
+**Static IP:** Set via NetworkManager: `sudo nmcli con mod ens32 ipv4.method manual ipv4.addresses 192.168.50.30/24`
+
+### Static IPs
+| VM | Method | Config |
+|---|---|---|
+| VM1 | Netplan | `/etc/netplan/01-lan.yaml` |
+| VM2 | Netplan | `/etc/netplan/01-lan.yaml` |
+| VM3 | /etc/network/interfaces | Static entry for eth0 |
+| VM4 | NetworkManager | `nmcli con mod ens32` |
+
+### Pre-cached Container Images on VM2
+Pulled with `sudo k3s ctr images pull` before removing internet:
+- `nginx:latest`: used by pwned.yaml
+- `python:3.9-slim`: used by webapp pod
+- `imagePullPolicy: IfNotPresent` in pod specs so K8s uses cached images
+
+---
+
+## 10. Files On Each VM
+
+### VM1 (Master) Desktop
+| File | Purpose |
+|---|---|
+| hardened-role.yaml | Least-privilege Role (get/list pods in vuln-app) |
+| hardened-rolebinding.yaml | Binds role to vuln-sa |
+| grading_script_3.sh | Checks RBAC fix |
+| grading_script_4.sh | Checks PSS enforcement |
+
+### VM2 (Worker)
+| File | Purpose |
+|---|---|
+| /root/flag/proof.txt | FLAG{k8s_privilege_escalation_successful} |
+
+### VM3 (Kali) Desktop
+| File | Purpose |
+|---|---|
+| pwned.yaml | Privileged pod YAML for attack |
+| grading_script_0.sh | LFI quiz (3 questions) |
+| grading_script_1.sh | Flag verification |
+
+### VM4 (Security Onion) Desktop
+| File | Purpose |
+|---|---|
+| grading_script_2.sh | Detection quiz (10 questions) |
+
+Data views (`k8s-audit-*` and `falco-alerts-*`) are NOT pre-created, so students create them during Phase 3.
+
+---
+
+## 11. Key Challenges and Lessons Learned
+
+### Security Onion Was The Hardest Part
+- Salt daemon constantly overwrites manual iptables and config changes
+- ALL firewall rules must be managed through the web UI, never directly
+- The IP change from `10.5.5.72` to `192.168.50.30` required editing 4 Salt pillar files
+- Docker containers had the old IP hardcoded in their `/etc/hosts`, which caused the 500 error on the web UI
+- Takes 15-20 minutes to fully initialize after boot
+- Logstash (port 5044) never worked because Salt kept overwriting our beats input config, so we switched to direct Elasticsearch (port 9200)
+
+### Falco Had To Be On The Right VM
+Initially installed Falco on a separate VM5, thinking it could monitor the cluster remotely. Wrong: Falco uses eBPF to monitor LOCAL syscalls only. Had to move it to VM2 and remove VM5.
+
+### Bridge-net Removal Broke Flannel
+Removing internet access (`bridge-net`) removed the default route. Flannel (k3s networking) needs a default route to find the right interface. Fixed with `--flannel-iface=ens32` in k3s service files on both VM1 and VM2.
+
+### Container Images Need Pre-caching
+Without internet, Kubernetes can't pull images. Had to pre-pull nginx and python images on VM2 using `sudo k3s ctr images pull`. Also needed `imagePullPolicy: IfNotPresent` in all pod specs.
+
+### /etc/shadow vs /host/etc/shadow
+`cat /etc/shadow` inside the container triggers Falco because it goes through the container's filesystem namespace. `cat /host/etc/shadow` via hostPath mount bypasses detection because it's a direct passthrough to the host filesystem.
