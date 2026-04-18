@@ -58,3 +58,63 @@ vulnerable.
    LFI opens the door, RBAC hands over the keys, and no PSS lets the attacker walk out.
 ```
 
+<details>
+<summary>Same diagram as Mermaid</summary>
+
+```mermaid
+flowchart LR
+    A[VM3 Kali\n192.168.50.20] -->|curl LFI /read?file=| B[VM2 webapp\n:30270]
+    B -->|steals SA JWT token| A
+    A -->|kubectl --token=$TOKEN| C[VM1 API server\n:6443]
+    C -->|RBAC: vuln-sa-admin = cluster-admin| A
+    A -->|apply pwned.yaml privileged pod| C
+    C -->|schedules pod nodeName=worker| D[VM2 host]
+    A -->|exec cat /host/root/flag/proof.txt| D
+    D -->|FLAG| A
+```
+</details>
+
+---
+
+## Repo layout
+
+```
+k8s-guard/
+├── README.md                     ← you are here
+├── docs/                         ← original source material (unmodified)
+│   └── K8s_Guard_Full_Project_Documentation.md
+├── manifests/                    ← vulnerable-cluster Kubernetes YAML
+│   ├── 00-namespace.yaml                     vuln-app namespace (no PSS = Vuln 3)
+│   ├── 01-serviceaccount-vuln-sa.yaml        vuln-sa service account (token target)
+│   ├── 02-clusterrolebinding-vuln-sa-admin.yaml  vuln-sa → cluster-admin (Vuln 2)
+│   ├── 03-webapp-pod.yaml                     Internal Document Portal w/ LFI (Vuln 1)
+│   └── 04-webapp-svc.yaml                     NodePort webapp-svc on 30270
+├── attack/                       ← attacker's perspective
+│   ├── ATTACK.md                             numbered attack-chain walkthrough
+│   └── pwned.yaml                            privileged attack pod
+├── detection/                    ← defender's perspective (Security Onion)
+│   ├── DETECTION.md                          audit + Falco investigation guide
+│   ├── k3s-audit-config.yaml                 K8s audit logging config (VM1)
+│   ├── filebeat-vm1-audit.yml                ships audit logs → Elasticsearch (redacted)
+│   └── filebeat-vm2-falco.yml                ships Falco alerts → Elasticsearch (redacted)
+└── hardening/                    ← remediation (NSA/CISA guide)
+    ├── HARDENING.md                          3 fixes mapped to NSA/CISA sections
+    ├── hardened-role.yaml                    least-privilege Role (get/list pods)
+    ├── hardened-rolebinding.yaml             binds Role to vuln-sa (namespace-scoped)
+    └── namespace-hardened.yaml               vuln-app + restricted PSS label
+```
+
+## Quickstart
+
+- **Attackers:** start at [`attack/ATTACK.md`](./attack/ATTACK.md). Every
+  command, in order, from Kali.
+- **Defenders:** go to [`detection/DETECTION.md`](./detection/DETECTION.md) for
+  how to find the attack in Security Onion / Kibana.
+- **Hardeners:** go to [`hardening/HARDENING.md`](./hardening/HARDENING.md) for
+  the three fixes and their NSA/CISA mappings.
+- **Full context:** [`docs/K8s_Guard_Full_Project_Documentation.md`](./docs/K8s_Guard_Full_Project_Documentation.md).
+
+---
+
+## MITRE ATT&CK mapping
+
