@@ -118,3 +118,49 @@ k8s-guard/
 
 ## MITRE ATT&CK mapping
 
+MITRE ATT&CK for Containers technique IDs mapped to the lab's attack steps.
+
+| Phase | Documented action | Tactic | Technique |
+|---|---|---|---|
+| Recon | LFI reads arbitrary files via `/read?file=` | Initial Access | T1190 Exploit Public-Facing Application |
+| Recon | Read SA token from `/var/run/secrets/.../token` | Credential Access | T1552.001 Unsecured Credentials: Credentials In Files |
+| Recon | `nmap -p 6443` for the API server | Discovery | T1046 Network Service Discovery |
+| Recon | Enumerate ClusterRoleBindings via kubectl | Discovery | T1069.003 Permission Groups Discovery: Cloud Groups |
+| Escalation | Deploy privileged pod with stolen cluster-admin token | Privilege Escalation | T1611 Escape to Host |
+| Escalation | hostPath `/` mount + `hostPID`/`hostNetwork` | Privilege Escalation | T1610 Deploy Container |
+| Escalation | `cat /etc/shadow` inside the container | Credential Access | T1003.008 OS Credential Dumping: /etc/passwd and /etc/shadow |
+
+---
+
+## Lab environment
+
+Originally built and run in **a VMware lab environment** (isolated, no
+internet) using **k3s** (lightweight Kubernetes). Four VMs on an isolated
+`192.168.50.0/24` network:
+
+| VM | Role | IP | OS | Student phase |
+|---|---|---|---|---|
+| VM1 | k3s master | 192.168.50.10 | Ubuntu 24 | Hardening |
+| VM2 | k3s worker (webapp, Falco, flag) | 192.168.50.11 | Ubuntu 24 | n/a (do not access) |
+| VM3 | Attacker | 192.168.50.20 | Kali Linux | Attack |
+| VM4 | SIEM (Security Onion) | 192.168.50.30 | Security Onion | Detection |
+
+Container images (`nginx`, `python:3.9-slim`) are pre-cached on VM2 for
+airgapped operation; k3s uses `--flannel-iface=ens32` to network without a
+default gateway.
+
+---
+
+## Credits
+
+By Kaivalya Ahir. Built as a small team project.
+
+---
+
+## References
+
+- NSA & CISA. *Kubernetes Hardening Guide v1.2* (August 2022).
+- CNCF *Annual Survey 2023*; Red Hat *State of Kubernetes Security 2024*.
+- Falco, Kubernetes RBAC / Pod Security Standards, Security Onion, and k3s docs.
+
+_See `docs/K8s_Guard_Full_Project_Documentation.md` Section 14 for full citations._
