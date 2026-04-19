@@ -598,3 +598,88 @@ Without internet, Kubernetes can't pull images. Had to pre-pull nginx and python
 
 ### /etc/shadow vs /host/etc/shadow
 `cat /etc/shadow` inside the container triggers Falco because it goes through the container's filesystem namespace. `cat /host/etc/shadow` via hostPath mount bypasses detection because it's a direct passthrough to the host filesystem.
+
+### Kali Uses Zsh
+Clear history with `echo "" > ~/.zsh_history`, not `history -c`. The corrupt history file warning is harmless.
+
+### Stale ARP Entries
+If VMs can't ping each other after network changes, flush ARP: `sudo ip neigh flush dev ens32`
+
+---
+
+## 12. Presentation Plan
+
+### Slide Structure (7 slides, ~5 minutes)
+1. Title: K8s-Guard, team name
+2. Why Kubernetes Security: stats, breaches, NSA/CISA guide
+3. Three Vulnerabilities: LFI, RBAC, no PSS
+4. Lab Architecture: 4 VMs, data flow, attack path
+5. Lab Phases: 4 phases, one line each
+6. Live Demo: transition slide
+7. Thank You / Questions
+
+### Speaker Assignments
+The demo is split across the team: one person walks through slides 1-5 and the Phase 1 recon demo, another covers Phase 2 (Attack) and the Phase 3 audit log investigation, and a third takes the Phase 3 Falco investigation plus Phase 4 (Hardening) and the conclusion.
+
+### Demo Timing
+- Slides: ~5 min
+- Phase 1 Recon: ~5 min
+- Phase 2 Attack: ~8 min
+- Phase 3 Detection: ~10 min
+- Phase 4 Hardening: ~5 min
+- Wrap-up: ~2 min
+- Total: ~35 min
+
+---
+
+## 13. Common Questions and Answers
+
+**Q: Why k3s instead of full Kubernetes?**
+A: Resource constraints in the lab environment. k3s runs on 2GB RAM. Full kubeadm needs 4GB+ per node.
+
+**Q: Why not use a real Docker image for the webapp?**
+A: Airgapped environment. Building a custom image requires a registry and internet. Inline Python avoids this.
+
+**Q: Why does /host/etc/shadow not trigger Falco?**
+A: Falco's eBPF probe monitors the container's filesystem namespace. The hostPath mount is a direct passthrough to the host, bypassing the container namespace.
+
+**Q: Why Filebeat to Elasticsearch instead of Logstash?**
+A: Security Onion's Salt kept overwriting our Logstash config. Direct to Elasticsearch bypassed the issue.
+
+**Q: Why don't we fix the LFI?**
+A: LFI is an application code bug, a developer fix, not a Kubernetes security fix. Our lab focuses on K8s security controls.
+
+**Q: Why both RBAC and PSS?**
+A: Defense in depth. RBAC controls WHO can do WHAT. PSS controls WHAT KINDS of pods are allowed. If either fails, the other still protects.
+
+**Q: How is this different from Topic 9?**
+A: Topic 9 is attack-focused. Our Topic 2 is about detection and monitoring. The attack is just setup: the real learning is investigating through Security Onion and understanding why detection tools caught it.
+
+**Q: What is eBPF?**
+A: Extended Berkeley Packet Filter. A Linux kernel technology that lets programs run inside the kernel without modifying source code. Falco uses it to hook into syscalls in real-time.
+
+**Q: What is a JWT token?**
+A: JSON Web Token. A compact, signed token format encoding identity and permissions. Kubernetes uses JWTs for service account authentication.
+
+**Q: What if Security Onion takes too long to start?**
+A: Pre-launch the lab 15 minutes before. Students do Phase 1 and 2 while Security Onion boots. By Phase 3 it should be ready.
+
+---
+
+## 14. References
+
+1. National Security Agency and Cybersecurity and Infrastructure Security Agency. *Kubernetes Hardening Guide v1.2*. August 2022. https://media.defense.gov/2022/Aug/29/2003066362/-1/-1/0/CTR_KUBERNETES_HARDENING_GUIDANCE_1.2_20220829.PDF
+
+2. CNCF. *Annual Survey 2023*. https://www.cncf.io/reports/cncf-annual-survey-2023/
+
+3. Red Hat. *State of Kubernetes Security 2024*. https://www.redhat.com/en/resources/state-kubernetes-security-report
+
+4. "Falco Rules." Falco Documentation. https://falco.org/docs/reference/rules/
+
+5. "Role-Based Access Control." Kubernetes Documentation. https://kubernetes.io/docs/reference/access-authn-authz/rbac/
+
+6. "Pod Security Standards." Kubernetes Documentation. https://kubernetes.io/docs/concepts/security/pod-security-standards/
+
+7. "Security Onion Documentation." Security Onion Solutions. https://docs.securityonion.net/
+
+8. "k3s - Lightweight Kubernetes." Rancher Labs. https://k3s.io/
