@@ -21,12 +21,13 @@ that do not need them (*Protecting Pod service account tokens*, p. 12, and
 ```bash
 sudo kubectl delete clusterrolebinding vuln-sa-admin
 ```
-Removes `cluster-admin` from `vuln-sa`. The stolen token keeps only the
-permissions Kubernetes gives every authenticated identity by default (API
-discovery and reading basic information about itself, through the
+Removes `cluster-admin` from `vuln-sa`. The stolen token keeps the
+permissions Kubernetes' default RBAC policy gives every authenticated identity
+(API discovery and reading basic information about itself, through the
 `system:basic-user`, `system:discovery` and `system:public-info-viewer`
-ClusterRoles). It loses all access to pods, secrets, bindings and other
-cluster objects.
+ClusterRoles) and, as a service account, read access to the service-account
+issuer discovery endpoints (`system:service-account-issuer-discovery`). It
+loses all access to pods, secrets, bindings and other cluster objects.
 (Addresses Vulnerability 2. NSA/CISA: Authentication and authorization.)
 
 ## Fix 2: Apply least-privilege RBAC
@@ -97,8 +98,8 @@ wins.) This was not part of the lab's hardening steps or grading scripts.
 - **PSS alone:** Rejects the privileged pod in `vuln-app`, but the attacker
   still has cluster-admin. With cluster-admin they can remove the label or
   deploy to another namespace, and do other damage.
-- **Both together:** The stolen token can only list pods in `vuln-app`, and
-  privileged pods are rejected in that namespace.
+- **Both together:** The stolen token can only get and list pods in
+  `vuln-app`, and privileged pods are rejected in that namespace.
 
 ## Why we don't fix the LFI
 The LFI is an application code bug, a developer's job, not a Kubernetes

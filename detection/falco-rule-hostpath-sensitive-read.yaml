@@ -8,7 +8,9 @@
 # `fd.name in (sensitive_file_names)`, an exact list of paths such as
 # /etc/shadow. Reading the worker's /etc/shadow through the pwned pod's
 # hostPath mount opens /host/etc/shadow, which is not in the list, so no alert
-# is raised. This rule matches the same file names as path suffixes.
+# is raised. This rule matches the same four file names as path suffixes. It
+# does not cover the macro's directory branch (/etc/sudoers.d, /etc/pam.d),
+# so files under /host/etc/sudoers.d/ or /host/etc/pam.d/ are still missed.
 #
 # Load order: this file uses the `sensitive_file_names` list and the
 # `open_read` and `container` macros from falco_rules.yaml, so it must be
@@ -17,7 +19,8 @@
 # /etc/falco/rules.d, so copying this file into /etc/falco/rules.d/ works.
 #
 # Test (VM2 runs Falco; run the exec from Kali with the stolen token):
-#   kubectl exec pwned -n vuln-app -- cat /host/etc/shadow
+#   kubectl ... exec pwned -n vuln-app -- cat /host/etc/shadow
+#   (`kubectl ...` = the --server/--token flags, as in attack/ATTACK.md)
 # Expected: one Warning alert with file=/host/etc/shadow.
 
 - macro: sensitive_file_via_other_path

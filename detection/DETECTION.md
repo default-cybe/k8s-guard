@@ -47,12 +47,15 @@ starts with "Sensitive file opened for reading by non-trusted program"
 > sees every `open`/`openat` on the node, including opens that go through a
 > hostPath bind mount. The gap is in the rule. "Read sensitive file untrusted"
 > uses the `sensitive_files` macro, which checks `fd.name in
-> (sensitive_file_names)` (rules releases before 4.0.0 also require
+> (sensitive_file_names)` (rules releases before 3.2.0 also require
 > `fd.name startswith /etc`), and that list holds exact paths:
 > `[/etc/shadow, /etc/sudoers, /etc/pam.conf, /etc/security/pwquality.conf]`.
 > `fd.name` is the path the process opened, as seen from inside the container,
 > so the hostPath read arrives as `/host/etc/shadow`. That string is not in the
-> list, so the rule does not match and no alert is raised.
+> list, so the rule does not match and no alert is raised. The macro's other
+> branch, `fd.directory in (/etc/sudoers.d, /etc/pam.d)`, is also an exact
+> match, so files under `/host/etc/sudoers.d/` and `/host/etc/pam.d/` are
+> missed the same way.
 
 > Detection in the graded lab relied only on Falco's default ruleset ("Read
 > sensitive file untrusted"). No custom Falco rules were loaded during the lab.
@@ -104,11 +107,14 @@ To test it on VM2: load it after the default rules (it uses the
 `/etc/falco/falco_rules.yaml`, then `/etc/falco/falco_rules.local.yaml`, then
 `/etc/falco/rules.d`, so copying the file into `/etc/falco/rules.d/` is enough.
 Restart `falco-modern-bpf.service`, then
-run `kubectl exec pwned -n vuln-app -- cat /host/etc/shadow` from Kali. The
+run `kubectl ... exec pwned -n vuln-app -- cat /host/etc/shadow` from Kali
+(`kubectl ...` is the `--server`/`--token` shorthand from ATTACK.md). The
 expected result is one `Warning` alert with `file=/host/etc/shadow`.
 
 The `and not fd.name in (sensitive_file_names)` line keeps the rule from
-duplicating the default rule's alert for `/etc/shadow` itself. The rule does
+duplicating the default rule's alert for `/etc/shadow` itself. The rule covers
+only the four file names in `sensitive_file_names`; it does not cover files
+under `/etc/sudoers.d` or `/etc/pam.d` read through another path. The rule does
 not apply the default rule's allowlist of trusted programs, so node agents
 that legitimately read host files through a hostPath mount may need an
 exception.
