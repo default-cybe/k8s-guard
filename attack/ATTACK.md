@@ -45,7 +45,8 @@ Output: System passwd file. Confirms the app reads ANY file without validation.
 ```bash
 curl "http://192.168.50.11:30270/read?file=/var/run/secrets/kubernetes.io/serviceaccount/token"
 ```
-Output: A long JWT token string. Every K8s pod has this at a well-known path.
+Output: A long JWT token string. Every K8s pod that auto-mounts its
+service-account token (the default) has it at this well-known path.
 
 **Step 5.** Save the token and scan for the API server.
 ```bash
@@ -114,10 +115,10 @@ Output: `FLAG{k8s_privilege_escalation_successful}`
 Complete takeover: from a web bug to full host access in a few commands.
 
 > Detection note (see `../detection/DETECTION.md`): `cat /etc/shadow` inside the
-> container triggers Falco because it traverses the container's filesystem
-> namespace. `cat /host/etc/shadow` via the hostPath mount does NOT trigger
-> Falco. The mount is a direct passthrough to the host, bypassing the
-> container namespace that Falco's eBPF probe watches.
+> container triggers Falco's default rule "Read sensitive file untrusted".
+> `cat /host/etc/shadow` via the hostPath mount does NOT trigger it. Falco
+> sees that open too; the default rule only matches an exact list of paths
+> such as `/etc/shadow`, and `/host/etc/shadow` is not on the list.
 
 ---
 

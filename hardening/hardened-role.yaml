@@ -1,7 +1,8 @@
 # Hardened least-privilege Role  (Hardening Fix 2)
 #
 # Namespace-scoped Role allowing only get/list on pods in vuln-app. Replaces
-# the cluster-admin grant. NSA/CISA Kubernetes Hardening Guide v1.2, Section 5:
+# the cluster-admin grant. NSA/CISA Kubernetes Hardening Guide v1.2,
+# "Authentication and authorization" (pp. 22-26), "Role-based access control":
 # least-privilege RBAC.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

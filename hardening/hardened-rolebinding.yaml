@@ -4,8 +4,8 @@
 # ClusterRoleBinding vuln-sa-admin that hardening Fix 1 deletes). The service
 # account can now only get/list pods in its own vuln-app namespace.
 #
-# Maps to NSA/CISA Kubernetes Hardening Guide v1.2, Section 5:
-# least-privilege RBAC.
+# Maps to NSA/CISA Kubernetes Hardening Guide v1.2, "Authentication and
+# authorization" (pp. 22-26), "Role-based access control": least-privilege RBAC.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:

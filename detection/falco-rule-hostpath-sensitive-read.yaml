@@ -1,0 +1,47 @@
+# Follow-up Falco rule for the hostPath detection gap (see DETECTION.md)
+#
+# NOT part of the graded lab run. This rule was written after the lab. It was
+# not loaded into Falco during the lab and has not yet been tested against the
+# lab cluster.
+#
+# The gap: the default rule "Read sensitive file untrusted" matches
+# `fd.name in (sensitive_file_names)`, an exact list of paths such as
+# /etc/shadow. Reading the worker's /etc/shadow through the pwned pod's
+# hostPath mount opens /host/etc/shadow, which is not in the list, so no alert
+# is raised. This rule matches the same file names as path suffixes.
+#
+# Load order: this file uses the `sensitive_file_names` list and the
+# `open_read` and `container` macros from falco_rules.yaml, so it must be
+# loaded after falco_rules.yaml. The default falco.yaml loads
+# /etc/falco/falco_rules.yaml, then falco_rules.local.yaml, then
+# /etc/falco/rules.d, so copying this file into /etc/falco/rules.d/ works.
+#
+# Test (VM2 runs Falco; run the exec from Kali with the stolen token):
+#   kubectl exec pwned -n vuln-app -- cat /host/etc/shadow
+# Expected: one Warning alert with file=/host/etc/shadow.
+
+- macro: sensitive_file_via_other_path
+  condition: >
+    (fd.name endswith "/etc/shadow" or
+     fd.name endswith "/etc/sudoers" or
+     fd.name endswith "/etc/pam.conf" or
+     fd.name endswith "/etc/security/pwquality.conf")
+    and not fd.name in (sensitive_file_names)
+
+- rule: Read sensitive file through non-standard path in container
+  desc: >
+    A process in a container opened a sensitive file through a path other than
+    its standard one, for example /host/etc/shadow through a hostPath volume
+    mounted at /host. The default rule "Read sensitive file untrusted" checks an
+    exact list of paths and does not match this.
+  condition: >
+    open_read
+    and container
+    and sensitive_file_via_other_path
+  output: >
+    Sensitive file opened for reading through a non-standard path in a container
+    | file=%fd.name process=%proc.name command=%proc.cmdline parent=%proc.pname
+    user=%user.name container_id=%container.id container_name=%container.name
+    image=%container.image.repository k8s_ns=%k8s.ns.name k8s_pod=%k8s.pod.name
+  priority: WARNING
+  tags: [container, filesystem, mitre_credential_access, T1003.008]

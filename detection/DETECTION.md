@@ -13,8 +13,8 @@ Two complementary telemetry sources:
   where). Config: [`k3s-audit-config.yaml`](./k3s-audit-config.yaml),
   shipped by [`filebeat-vm1-audit.yml`](./filebeat-vm1-audit.yml) into the
   `k8s-audit-*` index.
-- **Falco alerts**: runtime syscall activity *inside* the container (eBPF).
-  Shipped by [`filebeat-vm2-falco.yml`](./filebeat-vm2-falco.yml) into the
+- **Falco alerts**: runtime syscall activity on the worker node, including
+  syscalls made by processes inside containers (eBPF). Shipped by [`filebeat-vm2-falco.yml`](./filebeat-vm2-falco.yml) into the
   `falco-alerts-*` index.
 
 > **Why both are needed.** Audit logs show WHO did WHAT at the API level
@@ -33,17 +33,85 @@ separate VM5 and had to move it.)
 
 **The trigger in this lab:** when the attacker runs `cat /etc/shadow` inside the
 privileged `pwned` pod, Falco's eBPF probe intercepts the `openat` syscall and
-fires the built-in rule **"Sensitive file opened for reading"** (severity
-`Warning`).
+fires the built-in rule **"Read sensitive file untrusted"**, whose alert text
+starts with "Sensitive file opened for reading by non-trusted program"
+(priority `Warning`).
 
 > **Detection gap, `/etc/shadow` vs `/host/etc/shadow`:**
-> `cat /etc/shadow` (inside the container) traverses the container's filesystem
-> namespace and **triggers** Falco. `cat /host/etc/shadow` (via the hostPath
-> mount) is a direct passthrough to the host filesystem, bypassing the
-> container namespace Falco watches, and does **NOT** trigger an alert.
+> `cat /etc/shadow` (inside the container) **triggers** Falco. That reads the
+> container image's own `/etc/shadow`. `cat /host/etc/shadow` reads the worker
+> node's real `/etc/shadow` through the hostPath mount, and it does **NOT**
+> trigger an alert.
+>
+> This is not because Falco cannot see the host-side read. Falco's eBPF probe
+> sees every `open`/`openat` on the node, including opens that go through a
+> hostPath bind mount. The gap is in the rule. "Read sensitive file untrusted"
+> uses the `sensitive_files` macro, which checks `fd.name in
+> (sensitive_file_names)` (rules releases before 4.0.0 also require
+> `fd.name startswith /etc`), and that list holds exact paths:
+> `[/etc/shadow, /etc/sudoers, /etc/pam.conf, /etc/security/pwquality.conf]`.
+> `fd.name` is the path the process opened, as seen from inside the container,
+> so the hostPath read arrives as `/host/etc/shadow`. That string is not in the
+> list, so the rule does not match and no alert is raised.
 
-> Detection relies on Falco's default/built-in ruleset ("Sensitive file opened
-> for reading"), so no custom Falco rules were needed for this lab.
+> Detection in the graded lab relied only on Falco's default ruleset ("Read
+> sensitive file untrusted"). No custom Falco rules were loaded during the lab.
+
+### Follow-up rule for the hostPath gap (not part of the graded lab)
+
+The rule below closes the gap by matching the sensitive file names as path
+suffixes, so `/host/etc/shadow` (or a host file mounted under any other mount
+point) matches. It is also in
+[`falco-rule-hostpath-sensitive-read.yaml`](./falco-rule-hostpath-sensitive-read.yaml).
+
+**Status:** written after the lab. It was not loaded into Falco during the lab
+run and has not yet been tested against the lab cluster, so there is no alert
+output to show for it. The fields and operators (`fd.name`, `endswith`, `in`,
+the `open_read` and `container` macros, `sensitive_file_names`) are taken from
+the Falco documentation and the upstream `falco_rules.yaml`.
+
+```yaml
+- macro: sensitive_file_via_other_path
+  condition: >
+    (fd.name endswith "/etc/shadow" or
+     fd.name endswith "/etc/sudoers" or
+     fd.name endswith "/etc/pam.conf" or
+     fd.name endswith "/etc/security/pwquality.conf")
+    and not fd.name in (sensitive_file_names)
+
+- rule: Read sensitive file through non-standard path in container
+  desc: >
+    A process in a container opened a sensitive file through a path other than
+    its standard one, for example /host/etc/shadow through a hostPath volume
+    mounted at /host. The default rule "Read sensitive file untrusted" checks an
+    exact list of paths and does not match this.
+  condition: >
+    open_read
+    and container
+    and sensitive_file_via_other_path
+  output: >
+    Sensitive file opened for reading through a non-standard path in a container
+    | file=%fd.name process=%proc.name command=%proc.cmdline parent=%proc.pname
+    user=%user.name container_id=%container.id container_name=%container.name
+    image=%container.image.repository k8s_ns=%k8s.ns.name k8s_pod=%k8s.pod.name
+  priority: WARNING
+  tags: [container, filesystem, mitre_credential_access, T1003.008]
+```
+
+To test it on VM2: load it after the default rules (it uses the
+`sensitive_file_names` list and the `open_read` and `container` macros from
+`falco_rules.yaml`). The default `falco.yaml` loads
+`/etc/falco/falco_rules.yaml`, then `/etc/falco/falco_rules.local.yaml`, then
+`/etc/falco/rules.d`, so copying the file into `/etc/falco/rules.d/` is enough.
+Restart `falco-modern-bpf.service`, then
+run `kubectl exec pwned -n vuln-app -- cat /host/etc/shadow` from Kali. The
+expected result is one `Warning` alert with `file=/host/etc/shadow`.
+
+The `and not fd.name in (sensitive_file_names)` line keeps the rule from
+duplicating the default rule's alert for `/etc/shadow` itself. The rule does
+not apply the default rule's allowlist of trusted programs, so node agents
+that legitimately read host files through a hostPath mount may need an
+exception.
 
 ---
 

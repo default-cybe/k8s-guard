@@ -4,12 +4,16 @@
 #   kubectl label namespace vuln-app \
 #     pod-security.kubernetes.io/enforce=restricted --overwrite
 #
-# The `restricted` Pod Security Standard blocks privileged containers, hostPath
-# mounts, running as root, and other dangerous capabilities. Even with
-# cluster-admin, the privileged `pwned` pod would be rejected at admission.
+# The `restricted` Pod Security Standard blocks privileged containers, host
+# namespaces, hostPath volumes, running as root, and adding capabilities other
+# than NET_BIND_SERVICE. Pod Security Admission rejects the privileged `pwned`
+# pod in this namespace whatever RBAC permissions the requester has. It is not
+# a boundary against cluster-admin, which can change this label, use a
+# namespace without it, or change the admission configuration
+# (see hardening/HARDENING.md, Fix 3).
 #
-# Maps to NSA/CISA Kubernetes Hardening Guide v1.2, Section 4:
-# enforce Pod Security Standards.
+# Maps to NSA/CISA Kubernetes Hardening Guide v1.2, "Kubernetes Pod security"
+# (pp. 8-13), "Pod security enforcement" (p. 12).
 apiVersion: v1
 kind: Namespace
 metadata:
